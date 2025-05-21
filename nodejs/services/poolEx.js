@@ -1,0 +1,537 @@
+const tbc = require("tbc-lib-js");
+const { API, FT, poolNFT } = require("tbc-contract");
+const {PrivateKey} = require("tbc-lib-js");
+const {BuyTrade} = require('../model/BuyTrade');
+const {SellTrade} = require('../model/SellTrade');
+const {FTPrice} = require('../model/FTPrice');
+
+
+class poolEx extends  poolNFT {
+
+    constructor(config = {}) {
+        super(config);
+        this.tradeFee = 0
+        this.fee = 0.01
+        // this.address_buy = '1JmsUtRn54mzC9wM5jN8qAHpxx6zLLQ2yU';
+        // this.private_buy = tbc.PrivateKey.fromString('L2Uy1nwgV31fiqDhShASrsmQFKdyLp43AsgcG3vT6bJxRC8GhbBG');
+        // this.address_sell = '1JDrK8E5GVFxFY6FGvr8SLweHeyYqmhKHH';
+        // this.private_sell = tbc.PrivateKey.fromString('L3ocQyuhnAB7PFRfQ13Fs6qzW9jZYPsP2DXaiiaP3rn65gbsv4Ao');
+        this.address_buy = '1JUJPwmevxUNriQ8f8djPYnbrDhWguHQgZ';
+        this.private_buy = tbc.PrivateKey.fromString('Kz69whZKacAi1EsYEKZUBov8aeFNiyqWkEPd56vs5AVDHRgqdfNz');
+        this.address_sell = '19Saoe2q39N6UmHa435Asqa2VBN9pSuELQ';
+        this.private_sell = tbc.PrivateKey.fromString('KyPSGi8h8wEEkNy9UtmDB92hvMy6avvngurqAWnMoExjg8yLVzea');
+        this.buys = [];
+        this.sells = [];
+    }
+
+    async initfromContractId(retryCount = 8) {
+        try {
+            await super.initfromContractId();
+        } catch (error) {
+            if (retryCount > 0) {
+                console.warn(`Retrying initfromContractId (${8 - retryCount} attempt(s) failed)`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                return this.initfromContractId(retryCount - 1);
+            } else {
+                console.error(`Failed to initfromContractId after multiple attempts: ${error.message}`);
+                throw new Error("Failed to initfromContractId after retries.");
+            }
+        }
+    }
+
+
+    async boot() {
+        this.runPeriodicTask().catch(error => {
+            console.error('Top-level error:', error);
+        });
+        // setInterval(async () => {
+        //     try {
+        //         if (this.buys.length > 0) {
+        //             await this.processBuyData();
+        //             return
+        //         }
+        //         if (this.sells.length > 0) {
+        //             await this.processSellData();
+        //         }
+        //     } catch (error) {
+        //         console.log(error)
+        //     }
+        //
+        // }, 3000);
+    }
+
+    async performTask() {
+        try {
+            if (this.buys.length > 0) {
+                this.initfromContractId()
+                await this.processBuyData();
+                return
+            }
+            if (this.sells.length > 0) {
+                this.initfromContractId()
+                await this.processSellData();
+            }
+        } catch (error) {
+            console.log(error)
+        }
+    }
+
+    async runPeriodicTask() {
+        while (true) {
+            console.log(`Waiting for 3 seconds before next execution: ${this.contractTxid} ${new Date()}`);
+            await this.performTask();
+            await new Promise((resolve) => setTimeout(resolve, 3000));
+        }
+    }
+
+    async swaptoTokens(hash, address_to, amount_tbc, slide = 0) {
+        try {
+            const amount_ft = await this.getSwaptoToken(amount_tbc*(1000-this.tradeFee)/1000)
+            this.buys.push([address_to, amount_tbc*(1000-this.tradeFee)/1000, amount_ft*(1000-slide)/1000, slide, hash]);
+        } finally {
+        }
+    }
+
+    async processBuyData(){
+        const dataToProcess = [...this.buys];
+        this.buys.length = 0;
+        console.log(`processBuyData before: ${dataToProcess}`)
+        var beyondSlideArray = [];
+        let sum = dataToProcess.reduce((total, item) => total + item[1], 0);
+        const ft_amount = await this.getSwaptoToken(sum)
+        console.log(`ft_amount: ${ft_amount}`)
+        await FTPrice.create({
+            ft: this.ft_a_contractTxid,
+            kind: '1',
+            ft_amount: ft_amount,
+            tbc_amout: sum,
+            price: ft_amount/sum
+        })
+        for(let i = 0; i < dataToProcess.length; i++) {
+            if(dataToProcess[i][1]*ft_amount/sum < dataToProcess[i][2] && dataToProcess[i][3] > 0) {
+                beyondSlideArray.push(dataToProcess[i])
+                dataToProcess.splice(i,1)
+                i--;
+            }
+        }
+        console.log('Beyond the sliding point: ', beyondSlideArray)
+        console.log(`processBuyData after: ${dataToProcess}`)
+        if(beyondSlideArray.length > 0) {
+            console.log(beyondSlideArray.map(([addr]) => addr),beyondSlideArray.map(([description, amount]) => parseFloat((amount).toFixed(6))))
+            await this.transferTBC_toClient(this.private_buy, beyondSlideArray.map(([addr]) => addr), beyondSlideArray.map(([description, amount]) => parseFloat((amount).toFixed(6))))
+            await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+        if(dataToProcess.length == 0) {
+            return
+        }
+        sum = dataToProcess.reduce((total, item) => total + item[1], 0);
+        console.log('sum:', sum)
+        const trade = await BuyTrade.create({
+            buys: dataToProcess.map(([address, amount, slideAmount, slide, hash]) => ({
+                address,
+                amount,
+                slideAmount,
+                slide,
+                hash,
+            })),
+            tbc_total: sum,
+            ft_total: ft_amount
+        });
+        let txraw
+        try{
+            const utxo = await API.fetchUTXO(this.private_buy, sum + this.fee, this.network);
+            txraw = await this.swaptoToken_baseTBC(this.private_buy, this.address_buy, utxo, parseFloat((sum).toFixed(6)))
+        } catch (error) {
+            if (error.message.includes('Insufficient PoolFT, please merge FT UTXOs')) {
+                try {
+                    //await this.mergeFTResponse();
+                    await this.poolNFTMergeResponse(10);
+                } catch (err) {
+                    throw new Error(err);
+                }
+            } else {
+                throw new Error(error.message);
+            }
+        }
+        if (txraw.length === 0) {
+            const utxo = await API.fetchUTXO(this.private_buy, sum + this.fee, this.network);
+            txraw = await this.swaptoToken_baseTBC(this.private_buy, this.address_buy, utxo, parseFloat((sum).toFixed(6)))
+        }
+        const raw = await API.broadcastTXraw(txraw, this.network)
+        console.log('swaptoToken:', raw)
+        await BuyTrade.findByIdAndUpdate(
+            trade._id,
+            { raw: raw },
+        );
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        const Token = new FT(this.ft_a_contractTxid);
+        const TokenInfo = await API.fetchFtInfo(Token.contractTxid, this.network);
+        await Token.initialize(TokenInfo);
+        for (const [address, amount, slideAmount, slide, hash] of dataToProcess) {
+            console.log(`Description: ${address}, Amount: ${amount}, FT: ${parseFloat((amount*ft_amount/sum).toFixed(6))}`);
+            const utxo = await API.fetchUTXO(this.private_buy, 0.01, this.network);//准备utxo
+            const transferTokenAmountBN = BigInt(Math.ceil(amount*ft_amount/sum * Math.pow(10, Token.decimal)));
+            const ftutxo_codeScript = FT.buildFTtransferCode(Token.codeScript, this.address_buy).toBuffer().toString('hex');
+            const ftutxos = await API.fetchFtUTXOs(Token.contractTxid, this.address_buy, ftutxo_codeScript, this.network, transferTokenAmountBN);//准备ft utxo
+            let preTXs = [];
+            let prepreTxDatas = [];
+            for (let i = 0; i < ftutxos.length; i++) {
+                preTXs.push(await API.fetchTXraw(ftutxos[i].txId, this.network));
+                prepreTxDatas.push(await API.fetchFtPrePreTxData(preTXs[i], ftutxos[i].outputIndex, this.network));
+            }
+            // const mergeTX = Token.mergeFT(this.private_buy, ftutxos, utxo, preTXs, prepreTxDatas);
+            // if (typeof mergeTX === 'string') {
+            //     await API.broadcastTXraw(mergeTX, network);
+            //     await new Promise(resolve => setTimeout(resolve, 5000))
+            // } else {
+            //     console.log("Merge success");
+            // }
+            const transferTX = Token.transfer(this.private_buy, address, parseFloat((amount*ft_amount/sum).toFixed(6)), ftutxos, utxo, preTXs, prepreTxDatas);//组装交易
+            const tx = await API.broadcastTXraw(transferTX, this.network);
+            const result = await BuyTrade.findOneAndUpdate(
+                { 'buys.hash': hash }, // 查询条件
+                { $set: { 'buys.$[].tx': tx, 'buys.$[].ft_amount': parseFloat((amount*ft_amount/sum).toFixed(6))}}
+            );
+            if (!result) {
+                console.log("No document in BuyTrade.");
+            } else {
+                console.log("Updated BuyTrade success");
+            }
+            await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+    }
+
+    async getSwaptoToken(amount_tbc) {
+        const FTA = new FT(this.ft_a_contractTxid);
+        const FTAInfo = await API.fetchFtInfo(FTA.contractTxid, this.network);
+        await FTA.initialize(FTAInfo);
+
+        const amount_tbcbn = BigInt(amount_tbc * Math.pow(10, 6));
+        console.log('getSwaptoToken:', this.tbc_amount, amount_tbcbn);
+        if (this.tbc_amount < amount_tbcbn) {
+            throw new Error('Invalid tbc amount input');
+        }
+        const poolMul = this.ft_a_amount * this.tbc_amount;
+        const tbc_amount = BigInt(this.tbc_amount) + BigInt(amount_tbcbn);
+        const ft_a_amount = BigInt(poolMul) / BigInt(tbc_amount);
+        const ft_a_amount_decrement = BigInt(this.ft_a_amount) - BigInt(ft_a_amount);
+        if (this.ft_a_amount < ft_a_amount_decrement) {
+            throw new Error('Invalid FT amount input');
+        }
+        return Number(ft_a_amount_decrement)/Math.pow(10, FTA.decimal);
+    }
+
+    async swaptoTBCs(hash, address_to, amount_token, slide = 0) {
+        try {
+            const amount_tbc = await this.getSwaptoTBC(amount_token)
+            this.sells.push([address_to, amount_token, amount_tbc*(1000-slide)/1000, slide, hash]);
+        } finally {
+        }
+    }
+
+    async processSellData() {
+        const dataToProcess = [...this.sells];
+        this.sells.length = 0;
+        console.log(`processSellData before: ${dataToProcess}`)
+        let beyondSlideArray = [];
+        let  sum = dataToProcess.reduce((total, item) => total + item[1], 0);
+        const tbc_amount = await this.getSwaptoTBC(sum)
+        console.log(`tbc_amount: ${tbc_amount}`)
+        await FTPrice.create({
+            ft: this.ft_a_contractTxid,
+            kind: '2',
+            ft_amount: sum,
+            tbc_amout: tbc_amount,
+            price: sum/tbc_amount
+        })
+        for(let i = 0; i < dataToProcess.length; i++) {
+            if(dataToProcess[i][1]*tbc_amount/sum < dataToProcess[i][2] && dataToProcess[i][3] > 0) {
+                beyondSlideArray.push(dataToProcess[i])
+                dataToProcess.splice(i,1)
+                i--;
+            }
+        }
+        console.log('Beyond the sliding point: ', beyondSlideArray)
+        console.log(`processSellData after: ${dataToProcess}`)
+        if(beyondSlideArray.length > 0) {
+            console.log(beyondSlideArray.map(([addr]) => addr),beyondSlideArray.map(([description, amount]) => parseFloat((amount).toFixed(6))))
+            const Token = new FT(this.ft_a_contractTxid);
+            const TokenInfo = await API.fetchFtInfo(Token.contractTxid, this.network);
+            await Token.initialize(TokenInfo);
+            for(let i = 0; i < beyondSlideArray.length; i++) {
+                const utxo = await API.fetchUTXO(this.address_sell, 0.01, this.network);//准备utxo
+                const transferTokenAmountBN = BigInt(beyondSlideArray[i][1] * Math.pow(10, Token.decimal));
+                const ftutxo_codeScript = FT.buildFTtransferCode(Token.codeScript, this.address_sell).toBuffer().toString('hex');
+                const ftutxos = await API.fetchFtUTXOs(Token.contractTxid, this.address_sell, ftutxo_codeScript, this.network, transferTokenAmountBN);//准备ft utxo
+                let preTXs = [];
+                let prepreTxDatas = [];
+                for (let i = 0; i < ftutxos.length; i++) {
+                    preTXs.push(await API.fetchTXraw(ftutxos[i].txId, this.network));
+                    prepreTxDatas.push(await API.fetchFtPrePreTxData(preTXs[i], ftutxos[i].outputIndex, this.network));
+                }
+                const transferTX = Token.transfer(this.private_sell, beyondSlideArray[i][0], beyondSlideArray[i][1], ftutxos, utxo, preTXs, prepreTxDatas);//组装交易
+                await API.broadcastTXraw(transferTX, this.network);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+        }
+        if(dataToProcess.length == 0) {
+            return
+        }
+        sum = dataToProcess.reduce((total, item) => total + item[1], 0);
+        const trade = await SellTrade.create({
+            sells: dataToProcess.map(([address, amount, slideAmount, slide, hash]) => ({
+                address,
+                amount,
+                slideAmount,
+                slide,
+                hash
+            })),
+            ft_total: sum,
+            tbc_total: tbc_amount*(1000-this.tradeFee)/1000
+        })
+        console.log('sum:', sum)
+        let txraw
+        try{
+            const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
+            txraw = await this.swaptoTBC_baseToken(this.private_sell, this.address_sell, utxo, sum)
+        } catch (error) {
+            if (error.message.includes('Insufficient PoolTbc, please merge FT UTXOs')) {
+                try {
+                    await this.poolNFTMergeResponse(10);
+                } catch (err) {
+                    throw new Error(err);
+                }
+            } else if (error.message.includes('Insufficient FT-A amount, please merge FT-A UTXOs')) {
+                try {
+                    await this.mergeFTResponse();
+                } catch (err) {
+                    throw new Error(err);
+                }
+            } else {
+                throw new Error(error.message);
+            }
+        }
+        if (txraw === undefined) {
+            try{
+                const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
+                txraw = await this.swaptoTBC_baseToken(this.private_sell, this.address_sell, utxo, sum)
+            } catch (error) {
+                if (error.message.includes('Insufficient PoolTbc, please merge FT UTXOs')) {
+                    try {
+                        await this.poolNFTMergeResponse(10);
+                    } catch (err) {
+                        throw new Error(err);
+                    }
+                } else if (error.message.includes('Insufficient FT-A amount, please merge FT-A UTXOs')) {
+                    try {
+                        await this.mergeFTResponse();
+                    } catch (err) {
+                        throw new Error(err);
+                    }
+                } else {
+                    throw new Error(error.message);
+                }
+            }
+        }
+        if (txraw === undefined) {
+            const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
+            txraw = await this.swaptoTBC_baseToken(this.private_sell, this.address_sell, utxo, sum)
+        }
+        const raw = await API.broadcastTXraw(txraw, this.network)
+        console.log('swaptoTbc:', raw)
+        await SellTrade.findByIdAndUpdate(
+            trade._id,
+            { raw: raw },
+        );
+        await new Promise(resolve => setTimeout(resolve, 8000));
+        const tbc_amount_real = tbc_amount*(1000-this.tradeFee)/1000;
+        console.log(`tbc_amount_real: ${tbc_amount_real}`)
+        const tx = await this.transferTBC_toClient(this.private_sell, dataToProcess.map(([addr]) => addr), dataToProcess.map(([description, amount]) => parseFloat((tbc_amount_real*amount/sum).toFixed(6))))
+        for (const [address, amount, slideAmount, slide, hash] of dataToProcess) {
+            const result = await SellTrade.findOneAndUpdate(
+                { 'sells.hash': hash }, // 查询条件
+                { $set: { 'sells.$[].tx': tx, 'sells.$[].tbc_amount': tbc_amount_real*amount/sum}}
+            );
+            if (!result) {
+                console.log("No document in SellTrade.");
+            } else {
+                console.log("Updated SellTrades success");
+            }
+        }
+    }
+
+    async transferTBC_toClient(privateKey, address_to, amount) {
+        let totalAmount = 0;
+        let amount_bn = [];
+        for (let i = 0; i < address_to.length; i++) {
+            amount_bn.push(Math.ceil(amount[i] * Math.pow(10, 6)));
+            totalAmount += amount[i];
+        }
+        const utxo = await API.fetchUTXO(privateKey, totalAmount + 0.001, this.network);
+        const tx = new tbc.Transaction()
+            .from(utxo)
+        for (let i = 0; i < address_to.length; i++) {
+            tx.to(address_to[i], amount_bn[i]);
+        }
+        tx.change(privateKey.toAddress());
+        const txSize = tx.getEstimateSize();
+        if (txSize < 1000) {
+            tx.fee(80);
+        } else {
+            tx.feePerKb(100);
+        }
+        tx.sign(privateKey);
+        tx.seal();
+        const txraw = tx.uncheckedSerialize();
+        return API.broadcastTXraw(txraw, this.network)
+    }
+
+    async getSwaptoTBC(amount_token) {
+        const FTA = new FT(this.ft_a_contractTxid);
+        const FTAInfo = await API.fetchFtInfo(FTA.contractTxid, this.network);
+        await FTA.initialize(FTAInfo);
+        const amount_ftbn = BigInt(amount_token * Math.pow(10, FTA.decimal));
+        console.log('getSwaptoTBC:', this.ft_a_amount, amount_ftbn);
+        if (this.ft_a_amount < amount_ftbn) {
+            throw new Error('Invalid FT-A amount input');
+        }
+        const poolMul = this.ft_a_amount * this.tbc_amount;
+        const ft_a_amount = BigInt(this.ft_a_amount) + BigInt(amount_ftbn);
+        const tbc_amount = BigInt(poolMul) / ft_a_amount;
+        const tbc_amount_decrement = BigInt(this.tbc_amount) - BigInt(tbc_amount);
+        return Number(tbc_amount_decrement)/Math.pow(10, 6);
+    }
+
+    async mergeFTResponse() {
+        try {
+            this.initfromContractId()
+            const Token = new FT(this.ft_a_contractTxid);
+            const TokenInfo = await API.fetchFtInfo(Token.contractTxid, this.network); //获取FT信息
+            Token.initialize(TokenInfo);
+            const ftutxo_codeScript = FT.buildFTtransferCode(Token.codeScript, this.address_sell)
+                .toBuffer()
+                .toString('hex');
+
+            let txids = [];
+            for (let i = 0; i < 10; i++) {
+                const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
+                const ftutxos = await API.fetchFtUTXOs(
+                    Token.contractTxid,
+                    this.address_sell,
+                    ftutxo_codeScript,
+                    this.network
+                );
+                let preTXs = [];
+                let prepreTxDatas = [];
+                for (let i = 0; i < ftutxos.length; i++) {
+                    preTXs.push(await API.fetchTXraw(ftutxos[i].txId, this.network)); //获取每个ft输入的父交易
+                    prepreTxDatas.push(await API.fetchFtPrePreTxData(preTXs[i], ftutxos[i].outputIndex, this.network)); //获取每个ft输入的爷交易
+                }
+                const txHex = Token.mergeFT(this.private_sell, ftutxos, utxo, preTXs, prepreTxDatas);
+                if (txHex === true) break;
+                const { txid } = await API.broadcastTXraw(txHex, this.network);
+                if (!txid) {
+                    throw new Error('Failed to broadcast transaction!');
+                }
+                txids[i] = txid;
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+            return txids.join(', ');
+        } catch (error) {
+            console.error('Merge failed:', error);
+            //console.log('error:',error);
+            return error.message;
+        }
+    }
+
+    async poolNFTMergeResponse(merge_times) {
+        try {
+            await this.initfromContractId()
+            let txids  = [];
+            for (let i = 0; i < merge_times; i++) {
+                const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
+                const txHex = await this.mergeFTinPool(this.private_sell, utxo);
+                // console.log('txHex:', txHex)
+                if (txHex === true) break;
+                const txid = await API.broadcastTXraw(txHex, this.network);
+                console.log(txid)
+                if (i < merge_times - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                }
+            }
+
+            return txids.join(', ')
+        } catch (error) {
+            console.error('Merge failed:', error);
+            //console.log('error:',error);
+            return error.message;
+        }
+    }
+
+    async getFTTX(txid, retryCount = 8) {
+        const url_testnet = `https://tbcdev.org/v1/tbc/main/ft/decode/tx/history/${txid}`;
+        const url_mainnet = `https://turingwallet.xyz/v1/tbc/main/ft/decode/tx/history/${txid}`;
+        let url = url_testnet;
+        if (this.network === "testnet") {
+            url = url_testnet
+        } else if (this.network === "mainnet") {
+            url = url_mainnet
+        }
+        try {
+            const response = await (await fetch(url)).json();
+            let data = response;
+            const FTA = new FT(this.ft_a_contractTxid);
+            const FTAInfo = await API.fetchFtInfo(FTA.contractTxid, this.network);//获取FT信息
+            FTA.initialize(FTAInfo);
+            if (data.output[0].address == this.address_sell && data.output[0].contract_id == this.ft_a_contractTxid) {
+                return Number(data.output[0].ft_balance/Math.pow(10, FTA.decimal))
+            } else if (data.output[1].address == this.address_sell && data.output[1].contract_id == this.ft_a_contractTxid) {
+                return Number(data.output[0].ft_balance/Math.pow(10, FTA.decimal))
+            }
+            return new Error("tx error");
+        } catch (error) {
+            if (retryCount > 0) {
+                console.warn(`Retrying getFTTX for txid ${txid} (${8 - retryCount} attempt(s) failed)`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                return this.getFTTX(txid, retryCount - 1); // 递归调用进行重试
+            } else {
+                console.error(`Failed to fetch data after multiple attempts: ${error.message}`);
+                throw new Error("Failed to fetch PoolNFTInfo after retries.");
+            }
+        }
+    }
+
+    async getTBCTX(txid, retryCount = 8) {
+        const url_testnet = `https://tbcdev.org/v1/tbc/main/tx/hex/${txid}/decode`;
+        const url_mainnet = `https://turingwallet.xyz/v1/tbc/main/tx/hex/${txid}/decode`;
+        let url = url_testnet;
+        if (this.network === "testnet") {
+            url = url_testnet
+        } else if (this.network === "mainnet") {
+            url = url_mainnet
+        }
+        try {
+            const response = await (await fetch(url)).json();
+            let data = response;
+            if (data.vout[0].scriptPubKey.addresses.includes(this.address_buy)) {
+                return data.vout[0].value
+            } else if (data.vout[1].scriptPubKey.addresses.includes(this.address_buy)) {
+                return data.vout[1].value
+            }
+            return new Error("tx error");
+        } catch (error) {
+            if (retryCount > 0) {
+                console.warn(`Retrying getFTTX for txid ${txid} (${8 - retryCount} attempt(s) failed)`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                return this.getTBCTX(txid, retryCount - 1); // 递归调用进行重试
+            } else {
+                console.error(`Failed to fetch data after multiple attempts: ${error.message}`);
+                throw new Error("Failed to fetch PoolNFTInfo after retries.");
+            }
+        }
+    }
+
+}
+
+
+exports.poolEx = poolEx;
