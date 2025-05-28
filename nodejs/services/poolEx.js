@@ -6,20 +6,16 @@ const {SellTrade} = require('../model/SellTrade');
 const {FTPrice} = require('../model/FTPrice');
 
 
-class poolEx extends  poolNFT {
+class poolEx extends poolNFT {
 
     constructor(config = {}) {
         super(config);
         this.tradeFee = 0
         this.fee = 0.01
-        // this.address_buy = '1JmsUtRn54mzC9wM5jN8qAHpxx6zLLQ2yU';
-        // this.private_buy = tbc.PrivateKey.fromString('L2Uy1nwgV31fiqDhShASrsmQFKdyLp43AsgcG3vT6bJxRC8GhbBG');
-        // this.address_sell = '1JDrK8E5GVFxFY6FGvr8SLweHeyYqmhKHH';
-        // this.private_sell = tbc.PrivateKey.fromString('L3ocQyuhnAB7PFRfQ13Fs6qzW9jZYPsP2DXaiiaP3rn65gbsv4Ao');
-        this.address_buy = '1JUJPwmevxUNriQ8f8djPYnbrDhWguHQgZ';
-        this.private_buy = tbc.PrivateKey.fromString('Kz69whZKacAi1EsYEKZUBov8aeFNiyqWkEPd56vs5AVDHRgqdfNz');
-        this.address_sell = '19Saoe2q39N6UmHa435Asqa2VBN9pSuELQ';
-        this.private_sell = tbc.PrivateKey.fromString('KyPSGi8h8wEEkNy9UtmDB92hvMy6avvngurqAWnMoExjg8yLVzea');
+        this.address_buy = '1Ls612UKavNa5iQ7nj1DrBJjwFGQ9T8vMh';
+        this.private_buy = tbc.PrivateKey.fromString('L5mmZdkBymfUiLCfjD1vgVPu1EZTkYAFEwEU4LbHSp9abkzR5Vjp');
+        this.address_sell = '15KFMR28htitnmBdYVcZtvSfcQqsiG83SD';
+        this.private_sell = tbc.PrivateKey.fromString('L15ojQnDXgRShoryDyX9iE35g8Tw9txqCWX5ZZotp6tL7uhUf3uZ');
         this.buys = [];
         this.sells = [];
     }
@@ -98,6 +94,7 @@ class poolEx extends  poolNFT {
         console.log(`processBuyData before: ${dataToProcess}`)
         var beyondSlideArray = [];
         let sum = dataToProcess.reduce((total, item) => total + item[1], 0);
+        // 获取可兑换的代币数量，创建价格记录
         const ft_amount = await this.getSwaptoToken(sum)
         console.log(`ft_amount: ${ft_amount}`)
         await FTPrice.create({
@@ -107,6 +104,7 @@ class poolEx extends  poolNFT {
             tbc_amout: sum,
             price: ft_amount/sum
         })
+        // 过滤超出滑点的情况
         for(let i = 0; i < dataToProcess.length; i++) {
             if(dataToProcess[i][1]*ft_amount/sum < dataToProcess[i][2] && dataToProcess[i][3] > 0) {
                 beyondSlideArray.push(dataToProcess[i])
@@ -116,6 +114,7 @@ class poolEx extends  poolNFT {
         }
         console.log('Beyond the sliding point: ', beyondSlideArray)
         console.log(`processBuyData after: ${dataToProcess}`)
+        // 处理超出滑点的订单退款
         if(beyondSlideArray.length > 0) {
             console.log(beyondSlideArray.map(([addr]) => addr),beyondSlideArray.map(([description, amount]) => parseFloat((amount).toFixed(6))))
             await this.transferTBC_toClient(this.private_buy, beyondSlideArray.map(([addr]) => addr), beyondSlideArray.map(([description, amount]) => parseFloat((amount).toFixed(6))))
@@ -124,6 +123,7 @@ class poolEx extends  poolNFT {
         if(dataToProcess.length == 0) {
             return
         }
+        // 计算总交易量，创建交易记录
         sum = dataToProcess.reduce((total, item) => total + item[1], 0);
         console.log('sum:', sum)
         const trade = await BuyTrade.create({
@@ -137,10 +137,13 @@ class poolEx extends  poolNFT {
             tbc_total: sum,
             ft_total: ft_amount
         });
+        // 执行代币交换， 买比卖多才执行merge
         let txraw
         try{
             const utxo = await API.fetchUTXO(this.private_buy, sum + this.fee, this.network);
+            console.log('utxo:', utxo)
             txraw = await this.swaptoToken_baseTBC(this.private_buy, this.address_buy, utxo, parseFloat((sum).toFixed(6)))
+            console.log('txraw:', txraw)
         } catch (error) {
             if (error.message.includes('Insufficient PoolFT, please merge FT UTXOs')) {
                 try {
@@ -153,6 +156,7 @@ class poolEx extends  poolNFT {
                 throw new Error(error.message);
             }
         }
+        // 如果交易失败，尝试重新执行
         if (txraw.length === 0) {
             const utxo = await API.fetchUTXO(this.private_buy, sum + this.fee, this.network);
             txraw = await this.swaptoToken_baseTBC(this.private_buy, this.address_buy, utxo, parseFloat((sum).toFixed(6)))
@@ -164,15 +168,19 @@ class poolEx extends  poolNFT {
             { raw: raw },
         );
         await new Promise(resolve => setTimeout(resolve, 5000));
+        // 处理每个订单的代币转账
         const Token = new FT(this.ft_a_contractTxid);
         const TokenInfo = await API.fetchFtInfo(Token.contractTxid, this.network);
         await Token.initialize(TokenInfo);
         for (const [address, amount, slideAmount, slide, hash] of dataToProcess) {
             console.log(`Description: ${address}, Amount: ${amount}, FT: ${parseFloat((amount*ft_amount/sum).toFixed(6))}`);
-            const utxo = await API.fetchUTXO(this.private_buy, 0.01, this.network);//准备utxo
+            // 准备utxo
+            const utxo = await API.fetchUTXO(this.private_buy, 0.01, this.network);
             const transferTokenAmountBN = BigInt(Math.ceil(amount*ft_amount/sum * Math.pow(10, Token.decimal)));
+            // 准备FT TUXO
             const ftutxo_codeScript = FT.buildFTtransferCode(Token.codeScript, this.address_buy).toBuffer().toString('hex');
-            const ftutxos = await API.fetchFtUTXOs(Token.contractTxid, this.address_buy, ftutxo_codeScript, this.network, transferTokenAmountBN);//准备ft utxo
+            const ftutxos = await API.fetchFtUTXOs(Token.contractTxid, this.address_buy, ftutxo_codeScript, this.network, transferTokenAmountBN);
+            // 准备交易数据
             let preTXs = [];
             let prepreTxDatas = [];
             for (let i = 0; i < ftutxos.length; i++) {
@@ -186,8 +194,11 @@ class poolEx extends  poolNFT {
             // } else {
             //     console.log("Merge success");
             // }
-            const transferTX = Token.transfer(this.private_buy, address, parseFloat((amount*ft_amount/sum).toFixed(6)), ftutxos, utxo, preTXs, prepreTxDatas);//组装交易
+
+            // 执行转账
+            const transferTX = Token.transfer(this.private_buy, address, parseFloat((amount*ft_amount/sum).toFixed(6)), ftutxos, utxo, preTXs, prepreTxDatas);
             const tx = await API.broadcastTXraw(transferTX, this.network);
+            // 更新交易记录
             const result = await BuyTrade.findOneAndUpdate(
                 { 'buys.hash': hash }, // 查询条件
                 { $set: { 'buys.$[].tx': tx, 'buys.$[].ft_amount': parseFloat((amount*ft_amount/sum).toFixed(6))}}
@@ -451,7 +462,7 @@ class poolEx extends  poolNFT {
             for (let i = 0; i < merge_times; i++) {
                 const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
                 const txHex = await this.mergeFTinPool(this.private_sell, utxo);
-                // console.log('txHex:', txHex)
+                console.log('txHex:', txHex)
                 if (txHex === true) break;
                 const txid = await API.broadcastTXraw(txHex, this.network);
                 console.log(txid)
