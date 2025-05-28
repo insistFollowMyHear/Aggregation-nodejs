@@ -3,12 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "start": "nodemon -r dotenv/config ./app.js dotenv_config_path=.env.production",
-    "dev": "nodemon -r dotenv/config ./app.js dotenv_config_path=.env.test"
+    "start": "nodemon -r dotenv/config ./bin/www dotenv_config_path=.env.production",
+    "dev": "nodemon -r dotenv/config ./bin/www dotenv_config_path=.env.test"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
     "cookie-parser": "~1.4.4",
+    "cors": "^2.8.5",
     "debug": "~2.6.9",
     "dotenv": "^16.5.0",
     "express": "~4.16.1",
@@ -20,8 +21,8 @@
     "morgan": "~1.9.1",
     "node-cron": "^3.0.3",
     "nodemon": "^3.1.9",
-    "tbc-contract": "^1.1.14",
-    "tbc-lib-js": "^1.0.20"
+    "tbc-contract": "^1.2.1",
+    "tbc-lib-js": "^1.0.27"
   },
   "devDependencies": {
     "@types/node": "^22.10.2"
