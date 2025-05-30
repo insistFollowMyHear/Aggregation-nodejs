@@ -28,6 +28,9 @@ const TxSchema = new mongoose.Schema({
     updateTime: {
         type: Date,
         default: Date.now
+    },
+    ft_contract_id: {
+        type: String
     }
 })
 

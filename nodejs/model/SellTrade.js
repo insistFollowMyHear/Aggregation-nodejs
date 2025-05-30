@@ -42,6 +42,9 @@ const SellSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     },
+    ft_contract_id: {
+        type: String
+    }
 });
 
 // 创建模型

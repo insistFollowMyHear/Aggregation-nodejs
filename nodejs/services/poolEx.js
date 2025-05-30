@@ -1,28 +1,41 @@
 const tbc = require("tbc-lib-js");
-const { API, FT, poolNFT } = require("tbc-contract");
+const { API, FT, poolNFT2 } = require("tbc-contract");
 const {PrivateKey} = require("tbc-lib-js");
 const {BuyTrade} = require('../model/BuyTrade');
 const {SellTrade} = require('../model/SellTrade');
 const {FTPrice} = require('../model/FTPrice');
 
 
-class poolEx extends poolNFT {
+class poolEx extends poolNFT2 {
 
     constructor(config = {}) {
-        super(config);
+        super({ txid: config?.txid, network: config?.network });
+        // 服务费
+        this.serviceFee = 10
+        // 流动性提供者费用
+        this.lpFee = 25
+        // 手续费因子
+        this.feeFactor = 10000
+        // 交易手续费
         this.tradeFee = 0
+        // utxo 手续费
         this.fee = 0.01
-        this.address_buy = '1Ls612UKavNa5iQ7nj1DrBJjwFGQ9T8vMh';
-        this.private_buy = tbc.PrivateKey.fromString('L5mmZdkBymfUiLCfjD1vgVPu1EZTkYAFEwEU4LbHSp9abkzR5Vjp');
-        this.address_sell = '15KFMR28htitnmBdYVcZtvSfcQqsiG83SD';
-        this.private_sell = tbc.PrivateKey.fromString('L15ojQnDXgRShoryDyX9iE35g8Tw9txqCWX5ZZotp6tL7uhUf3uZ');
+        this.address_buy = config.address_buy_sell;
+        this.private_buy = config.private_buy_sell;
+
+        this.address_sell = config.address_buy_sell;
+        this.private_sell = config.private_buy_sell;
+
         this.buys = [];
         this.sells = [];
+        this.lpPlan = config.lpPlan;
+        this.ft_contract_id = config.ft_contract_id;
     }
 
     async initfromContractId(retryCount = 8) {
         try {
             await super.initfromContractId();
+            console.log('initform contarct id')
         } catch (error) {
             if (retryCount > 0) {
                 console.warn(`Retrying initfromContractId (${8 - retryCount} attempt(s) failed)`);
@@ -34,7 +47,6 @@ class poolEx extends poolNFT {
             }
         }
     }
-
 
     async boot() {
         this.runPeriodicTask().catch(error => {
@@ -74,9 +86,9 @@ class poolEx extends poolNFT {
 
     async runPeriodicTask() {
         while (true) {
-            console.log(`Waiting for 3 seconds before next execution: ${this.contractTxid} ${new Date()}`);
+            console.log(`Waiting for 30000 seconds before next execution: ${this.contractTxid} ${new Date()}`);
             await this.performTask();
-            await new Promise((resolve) => setTimeout(resolve, 3000));
+            await new Promise((resolve) => setTimeout(resolve, 30000));
         }
     }
 
@@ -93,20 +105,13 @@ class poolEx extends poolNFT {
         this.buys.length = 0;
         console.log(`processBuyData before: ${dataToProcess}`)
         var beyondSlideArray = [];
-        let sum = dataToProcess.reduce((total, item) => total + item[1], 0);
-        // 获取可兑换的代币数量，创建价格记录
-        const ft_amount = await this.getSwaptoToken(sum)
+        let sum = dataToProcess.reduce((total, item) => total + item[1], 0).toFixed(6);
+        // 获取可兑换的代币数量
+        let ft_amount = await this.getSwaptoToken(sum)
         console.log(`ft_amount: ${ft_amount}`)
-        await FTPrice.create({
-            ft: this.ft_a_contractTxid,
-            kind: '1',
-            ft_amount: ft_amount,
-            tbc_amout: sum,
-            price: ft_amount/sum
-        })
         // 过滤超出滑点的情况
         for(let i = 0; i < dataToProcess.length; i++) {
-            if(dataToProcess[i][1]*ft_amount/sum < dataToProcess[i][2] && dataToProcess[i][3] > 0) {
+            if(dataToProcess[i][1]*ft_amount/sum < dataToProcess[i][2] * (1 - dataToProcess[i][3]/100) && dataToProcess[i][3] > 0) {
                 beyondSlideArray.push(dataToProcess[i])
                 dataToProcess.splice(i,1)
                 i--;
@@ -116,8 +121,8 @@ class poolEx extends poolNFT {
         console.log(`processBuyData after: ${dataToProcess}`)
         // 处理超出滑点的订单退款
         if(beyondSlideArray.length > 0) {
-            console.log(beyondSlideArray.map(([addr]) => addr),beyondSlideArray.map(([description, amount]) => parseFloat((amount).toFixed(6))))
-            await this.transferTBC_toClient(this.private_buy, beyondSlideArray.map(([addr]) => addr), beyondSlideArray.map(([description, amount]) => parseFloat((amount).toFixed(6))))
+            console.log(beyondSlideArray.map(([addr]) => addr),beyondSlideArray.map(([description, amount]) => parseFloat(this.truncateDecimals(amount, 6))))
+            await this.transferTBC_toClient(this.private_buy, beyondSlideArray.map(([addr]) => addr), beyondSlideArray.map(([description, amount]) => this.truncateDecimals(amount, 6)))
             await new Promise(resolve => setTimeout(resolve, 5000));
         }
         if(dataToProcess.length == 0) {
@@ -125,7 +130,15 @@ class poolEx extends poolNFT {
         }
         // 计算总交易量，创建交易记录
         sum = dataToProcess.reduce((total, item) => total + item[1], 0);
-        console.log('sum:', sum)
+        ft_amount = await this.getSwaptoToken(sum)
+        console.log('sum and ft_amount:', sum, ft_amount)
+        await FTPrice.create({
+            ft: this.ft_a_contractTxid,
+            kind: '1',
+            ft_amount: ft_amount,
+            tbc_amout: sum,
+            price: ft_amount/sum
+        })
         const trade = await BuyTrade.create({
             buys: dataToProcess.map(([address, amount, slideAmount, slide, hash]) => ({
                 address,
@@ -135,14 +148,15 @@ class poolEx extends poolNFT {
                 hash,
             })),
             tbc_total: sum,
-            ft_total: ft_amount
+            ft_total: ft_amount,
+            ft_contract_id: this.ft_contract_id
         });
         // 执行代币交换， 买比卖多才执行merge
         let txraw
         try{
             const utxo = await API.fetchUTXO(this.private_buy, sum + this.fee, this.network);
             console.log('utxo:', utxo)
-            txraw = await this.swaptoToken_baseTBC(this.private_buy, this.address_buy, utxo, parseFloat((sum).toFixed(6)))
+            txraw = await this.swaptoToken_baseTBC(this.private_buy, this.address_buy, utxo, parseFloat(this.truncateDecimals(sum, 6)), this.lpPlan)
             console.log('txraw:', txraw)
         } catch (error) {
             if (error.message.includes('Insufficient PoolFT, please merge FT UTXOs')) {
@@ -158,11 +172,20 @@ class poolEx extends poolNFT {
         }
         // 如果交易失败，尝试重新执行
         if (txraw.length === 0) {
+            console.log('txraw try again')
+            await this.initfromContractId()
             const utxo = await API.fetchUTXO(this.private_buy, sum + this.fee, this.network);
-            txraw = await this.swaptoToken_baseTBC(this.private_buy, this.address_buy, utxo, parseFloat((sum).toFixed(6)))
+            txraw = await this.swaptoToken_baseTBC(this.private_buy, this.address_buy, utxo, parseFloat(this.truncateDecimals(sum, 6)), this.lpPlan)
         }
-        const raw = await API.broadcastTXraw(txraw, this.network)
-        console.log('swaptoToken:', raw)
+        let raw;
+        try {
+            raw = await API.broadcastTXraw(txraw, this.network)
+        } catch(error) {
+            await this.initfromContractId()
+            const utxo = await API.fetchUTXO(this.private_buy, sum + this.fee, this.network);
+            txraw = await this.swaptoToken_baseTBC(this.private_buy, this.address_buy, utxo, parseFloat(this.truncateDecimals(sum, 6)), this.lpPlan)
+            raw = await API.broadcastTXraw(txraw, this.network)
+        }
         await BuyTrade.findByIdAndUpdate(
             trade._id,
             { raw: raw },
@@ -173,13 +196,21 @@ class poolEx extends poolNFT {
         const TokenInfo = await API.fetchFtInfo(Token.contractTxid, this.network);
         await Token.initialize(TokenInfo);
         for (const [address, amount, slideAmount, slide, hash] of dataToProcess) {
-            console.log(`Description: ${address}, Amount: ${amount}, FT: ${parseFloat((amount*ft_amount/sum).toFixed(6))}`);
+            console.log(`Description: ${address}, Amount: ${amount}, FT: ${parseFloat(this.truncateDecimals(amount*ft_amount/sum, 6))}`);
             // 准备utxo
             const utxo = await API.fetchUTXO(this.private_buy, 0.01, this.network);
-            const transferTokenAmountBN = BigInt(Math.ceil(amount*ft_amount/sum * Math.pow(10, Token.decimal)));
+            const addressFtBanalce = await API.getFTbalance(Token.contractTxid, this.address_buy, this.network)
+            let transferTokenAmountBN = BigInt(Math.ceil(amount*ft_amount/sum * Math.pow(10, Token.decimal)));
+            
+            console.log('transferTokenAmountBN: ', transferTokenAmountBN)
+            console.log('addressFtBanalce', addressFtBanalce)
+            if (BigInt(addressFtBanalce) < transferTokenAmountBN) {
+                transferTokenAmountBN = BigInt(addressFtBanalce)
+            }
             // 准备FT TUXO
             const ftutxo_codeScript = FT.buildFTtransferCode(Token.codeScript, this.address_buy).toBuffer().toString('hex');
             const ftutxos = await API.fetchFtUTXOs(Token.contractTxid, this.address_buy, ftutxo_codeScript, this.network, transferTokenAmountBN);
+            console.log('ftutxos', ftutxos)
             // 准备交易数据
             let preTXs = [];
             let prepreTxDatas = [];
@@ -196,12 +227,12 @@ class poolEx extends poolNFT {
             // }
 
             // 执行转账
-            const transferTX = Token.transfer(this.private_buy, address, parseFloat((amount*ft_amount/sum).toFixed(6)), ftutxos, utxo, preTXs, prepreTxDatas);
+            const transferTX = Token.transfer(this.private_buy, address, parseFloat(this.truncateDecimals(amount*ft_amount/sum, 6)), ftutxos, utxo, preTXs, prepreTxDatas);
             const tx = await API.broadcastTXraw(transferTX, this.network);
             // 更新交易记录
             const result = await BuyTrade.findOneAndUpdate(
                 { 'buys.hash': hash }, // 查询条件
-                { $set: { 'buys.$[].tx': tx, 'buys.$[].ft_amount': parseFloat((amount*ft_amount/sum).toFixed(6))}}
+                { $set: { 'buys.$[].tx': tx, 'buys.$[].ft_amount': parseFloat(this.truncateDecimals(amount*ft_amount/sum, 6))}}
             );
             if (!result) {
                 console.log("No document in BuyTrade.");
@@ -217,18 +248,22 @@ class poolEx extends poolNFT {
         const FTAInfo = await API.fetchFtInfo(FTA.contractTxid, this.network);
         await FTA.initialize(FTAInfo);
 
-        const amount_tbcbn = BigInt(amount_tbc * Math.pow(10, 6));
+        // 计算手续费
+        const amount_tbcbn = 
+            BigInt(amount_tbc * Math.pow(10, 6)) *
+            BigInt(this.feeFactor - (this.serviceFee + this.lpFee)) / BigInt(this.feeFactor);
+        
         console.log('getSwaptoToken:', this.tbc_amount, amount_tbcbn);
-        if (this.tbc_amount < amount_tbcbn) {
-            throw new Error('Invalid tbc amount input');
-        }
+        // if (this.tbc_amount < amount_tbcbn) {
+        //     throw new Error('Invalid tbc amount input');
+        // }
         const poolMul = this.ft_a_amount * this.tbc_amount;
         const tbc_amount = BigInt(this.tbc_amount) + BigInt(amount_tbcbn);
         const ft_a_amount = BigInt(poolMul) / BigInt(tbc_amount);
         const ft_a_amount_decrement = BigInt(this.ft_a_amount) - BigInt(ft_a_amount);
-        if (this.ft_a_amount < ft_a_amount_decrement) {
-            throw new Error('Invalid FT amount input');
-        }
+        // if (this.ft_a_amount < ft_a_amount_decrement) {
+        //     throw new Error('Invalid FT amount input');
+        // }
         return Number(ft_a_amount_decrement)/Math.pow(10, FTA.decimal);
     }
 
@@ -245,18 +280,13 @@ class poolEx extends poolNFT {
         this.sells.length = 0;
         console.log(`processSellData before: ${dataToProcess}`)
         let beyondSlideArray = [];
-        let  sum = dataToProcess.reduce((total, item) => total + item[1], 0);
-        const tbc_amount = await this.getSwaptoTBC(sum)
+        let sum = dataToProcess.reduce((total, item) => total + item[1], 0).toFixed(6);
+        // 获取可兑换的tbc数量
+        let tbc_amount = await this.getSwaptoTBC(sum)
         console.log(`tbc_amount: ${tbc_amount}`)
-        await FTPrice.create({
-            ft: this.ft_a_contractTxid,
-            kind: '2',
-            ft_amount: sum,
-            tbc_amout: tbc_amount,
-            price: sum/tbc_amount
-        })
+        // 过滤超出滑点的情况
         for(let i = 0; i < dataToProcess.length; i++) {
-            if(dataToProcess[i][1]*tbc_amount/sum < dataToProcess[i][2] && dataToProcess[i][3] > 0) {
+            if(dataToProcess[i][1]*tbc_amount/sum < dataToProcess[i][2] * (1 - dataToProcess[i][3]/100) && dataToProcess[i][3] > 0) {
                 beyondSlideArray.push(dataToProcess[i])
                 dataToProcess.splice(i,1)
                 i--;
@@ -264,13 +294,14 @@ class poolEx extends poolNFT {
         }
         console.log('Beyond the sliding point: ', beyondSlideArray)
         console.log(`processSellData after: ${dataToProcess}`)
+        // 处理超出滑点的订单退款
         if(beyondSlideArray.length > 0) {
-            console.log(beyondSlideArray.map(([addr]) => addr),beyondSlideArray.map(([description, amount]) => parseFloat((amount).toFixed(6))))
+            console.log(beyondSlideArray.map(([addr]) => addr),beyondSlideArray.map(([description, amount]) => parseFloat(this.truncateDecimals(amount, 6))))
             const Token = new FT(this.ft_a_contractTxid);
             const TokenInfo = await API.fetchFtInfo(Token.contractTxid, this.network);
             await Token.initialize(TokenInfo);
             for(let i = 0; i < beyondSlideArray.length; i++) {
-                const utxo = await API.fetchUTXO(this.address_sell, 0.01, this.network);//准备utxo
+                const utxo = await API.fetchUTXO(this.private_sell, 0.01, this.network);//准备utxo
                 const transferTokenAmountBN = BigInt(beyondSlideArray[i][1] * Math.pow(10, Token.decimal));
                 const ftutxo_codeScript = FT.buildFTtransferCode(Token.codeScript, this.address_sell).toBuffer().toString('hex');
                 const ftutxos = await API.fetchFtUTXOs(Token.contractTxid, this.address_sell, ftutxo_codeScript, this.network, transferTokenAmountBN);//准备ft utxo
@@ -288,7 +319,17 @@ class poolEx extends poolNFT {
         if(dataToProcess.length == 0) {
             return
         }
+        // 计算总交易量，创建交易记录
         sum = dataToProcess.reduce((total, item) => total + item[1], 0);
+        tbc_amount = await this.getSwaptoTBC(sum)
+        console.log('sum and tbc_amount:', sum, tbc_amount)
+        await FTPrice.create({
+            ft: this.ft_a_contractTxid,
+            kind: '2',
+            ft_amount: sum,
+            tbc_amout: tbc_amount,
+            price: sum/tbc_amount
+        })
         const trade = await SellTrade.create({
             sells: dataToProcess.map(([address, amount, slideAmount, slide, hash]) => ({
                 address,
@@ -298,13 +339,15 @@ class poolEx extends poolNFT {
                 hash
             })),
             ft_total: sum,
-            tbc_total: tbc_amount*(1000-this.tradeFee)/1000
+            tbc_total: tbc_amount*(1000-this.tradeFee)/1000,
+            ft_contract_id: this.ft_contract_id
         })
-        console.log('sum:', sum)
+        // 执行代币交换
         let txraw
         try{
             const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
-            txraw = await this.swaptoTBC_baseToken(this.private_sell, this.address_sell, utxo, sum)
+            console.log('utxo:', utxo)
+            txraw = await this.swaptoTBC_baseToken(this.private_sell, this.address_sell, utxo, sum, this.lpPlan)
         } catch (error) {
             if (error.message.includes('Insufficient PoolTbc, please merge FT UTXOs')) {
                 try {
@@ -312,7 +355,7 @@ class poolEx extends poolNFT {
                 } catch (err) {
                     throw new Error(err);
                 }
-            } else if (error.message.includes('Insufficient FT-A amount, please merge FT-A UTXOs')) {
+            } else if (error.message.includes('Insufficient FTbalance, please merge FT UTXOs')) {
                 try {
                     await this.mergeFTResponse();
                 } catch (err) {
@@ -322,10 +365,12 @@ class poolEx extends poolNFT {
                 throw new Error(error.message);
             }
         }
+        // 如果交易失败，尝试重新执行
         if (txraw === undefined) {
             try{
+                await this.initfromContractId()
                 const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
-                txraw = await this.swaptoTBC_baseToken(this.private_sell, this.address_sell, utxo, sum)
+                txraw = await this.swaptoTBC_baseToken(this.private_sell, this.address_sell, utxo, sum, this.lpPlan)
             } catch (error) {
                 if (error.message.includes('Insufficient PoolTbc, please merge FT UTXOs')) {
                     try {
@@ -333,7 +378,7 @@ class poolEx extends poolNFT {
                     } catch (err) {
                         throw new Error(err);
                     }
-                } else if (error.message.includes('Insufficient FT-A amount, please merge FT-A UTXOs')) {
+                } else if (error.message.includes('Insufficient FTbalance, please merge FT UTXOs')) {
                     try {
                         await this.mergeFTResponse();
                     } catch (err) {
@@ -344,20 +389,22 @@ class poolEx extends poolNFT {
                 }
             }
         }
+        // 如果交易失败，尝试重新执行
         if (txraw === undefined) {
+            await this.initfromContractId()
             const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
-            txraw = await this.swaptoTBC_baseToken(this.private_sell, this.address_sell, utxo, sum)
+            txraw = await this.swaptoTBC_baseToken(this.private_sell, this.address_sell, utxo, sum, this.lpPlan)
         }
         const raw = await API.broadcastTXraw(txraw, this.network)
-        console.log('swaptoTbc:', raw)
         await SellTrade.findByIdAndUpdate(
             trade._id,
             { raw: raw },
         );
         await new Promise(resolve => setTimeout(resolve, 8000));
+        // 处理每个订单的tbc转账
         const tbc_amount_real = tbc_amount*(1000-this.tradeFee)/1000;
         console.log(`tbc_amount_real: ${tbc_amount_real}`)
-        const tx = await this.transferTBC_toClient(this.private_sell, dataToProcess.map(([addr]) => addr), dataToProcess.map(([description, amount]) => parseFloat((tbc_amount_real*amount/sum).toFixed(6))))
+        const tx = await this.transferTBC_toClient(this.private_sell, dataToProcess.map(([addr]) => addr), dataToProcess.map(([description, amount]) => this.truncateDecimals(tbc_amount_real*amount/sum, 6)))
         for (const [address, amount, slideAmount, slide, hash] of dataToProcess) {
             const result = await SellTrade.findOneAndUpdate(
                 { 'sells.hash': hash }, // 查询条件
@@ -401,11 +448,16 @@ class poolEx extends poolNFT {
         const FTA = new FT(this.ft_a_contractTxid);
         const FTAInfo = await API.fetchFtInfo(FTA.contractTxid, this.network);
         await FTA.initialize(FTAInfo);
-        const amount_ftbn = BigInt(amount_token * Math.pow(10, FTA.decimal));
+
+        // 计算手续费
+        const amount_ftbn =
+            BigInt(amount_token * Math.pow(10, FTA.decimal)) *
+            BigInt(this.feeFactor - (this.serviceFee + this.lpFee)) / BigInt(this.feeFactor);
+
         console.log('getSwaptoTBC:', this.ft_a_amount, amount_ftbn);
-        if (this.ft_a_amount < amount_ftbn) {
-            throw new Error('Invalid FT-A amount input');
-        }
+        // if (this.ft_a_amount < amount_ftbn) {
+        //     throw new Error('Invalid FT-A amount input');
+        // }
         const poolMul = this.ft_a_amount * this.tbc_amount;
         const ft_a_amount = BigInt(this.ft_a_amount) + BigInt(amount_ftbn);
         const tbc_amount = BigInt(poolMul) / ft_a_amount;
@@ -542,6 +594,13 @@ class poolEx extends poolNFT {
         }
     }
 
+    truncateDecimals(value, decimals) {
+        if (typeof value !== 'number') value = parseFloat(value);
+        if (isNaN(value)) return NaN;
+      
+        const factor = Math.pow(10, decimals);
+        return Math.floor(value * factor) / factor;
+    }
 }
 
 
