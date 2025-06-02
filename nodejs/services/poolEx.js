@@ -11,15 +11,15 @@ class poolEx extends poolNFT2 {
     constructor(config = {}) {
         super({ txid: config?.txid, network: config?.network });
         // 服务费
-        this.serviceFee = 10
+        this.serviceFee = process.env.SERVICEFEE
         // 流动性提供者费用
-        this.lpFee = 25
+        this.lpFee = process.env.LPFEE
         // 手续费因子
-        this.feeFactor = 10000
+        this.feeFactor = process.env.FEEFACTOR
         // 交易手续费
-        this.tradeFee = 0
+        this.tradeFee = process.env.TRADEFEE
         // utxo 手续费
-        this.fee = 0.01
+        this.fee = process.env.FEE
         this.address_buy = config.address_buy_sell;
         this.private_buy = config.private_buy_sell;
 
@@ -30,6 +30,8 @@ class poolEx extends poolNFT2 {
         this.sells = [];
         this.lpPlan = config.lpPlan;
         this.ft_contract_id = config.ft_contract_id;
+
+        this.periodicTime = process.env.PERIODICTIME
     }
 
     async initfromContractId(retryCount = 8) {
@@ -86,9 +88,9 @@ class poolEx extends poolNFT2 {
 
     async runPeriodicTask() {
         while (true) {
-            console.log(`Waiting for 30000 seconds before next execution: ${this.contractTxid} ${new Date()}`);
+            console.log(`Waiting for ${this.periodicTime} seconds before next execution: ${this.contractTxid} ${new Date()}`);
             await this.performTask();
-            await new Promise((resolve) => setTimeout(resolve, 30000));
+            await new Promise((resolve) => setTimeout(resolve, this.periodicTime));
         }
     }
 
