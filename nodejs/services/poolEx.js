@@ -21,10 +21,10 @@ class poolEx extends poolNFT2 {
         // utxo 手续费
         this.fee = process.env.FEE
         this.address_buy = config.address_buy_sell;
-        this.private_buy = config.private_buy_sell;
+        this.private_buy = tbc.PrivateKey.fromString(config.private_buy_sell);
 
         this.address_sell = config.address_buy_sell;
-        this.private_sell = config.private_buy_sell;
+        this.private_sell = tbc.PrivateKey.fromString(config.private_buy_sell);
 
         this.buys = [];
         this.sells = [];
