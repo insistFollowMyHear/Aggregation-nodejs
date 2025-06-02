@@ -9,7 +9,7 @@ if(process.env.NETWORK === 'testnet') {
         authSource: 'admin', // 如果需要指定认证数据库
     })
 } else {
-    mongoose.connect('mongodb://admin:ymEChFWfdHEvm6w1@172.31.46.86:27017/AggregatorService', {
+    mongoose.connect('mongodb://admin:ymEChFWfdHEvm6w1@172.31.36.44:27017/AggregatorService', {
         // useNewUrlParser: true, // 避免“不建议使用当前URL字符串解析器”
         // useUnifiedTopology: true,
         authSource: 'admin', // 如果需要指定认证数据库

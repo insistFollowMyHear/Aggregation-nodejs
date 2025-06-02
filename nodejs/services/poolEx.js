@@ -154,6 +154,7 @@ class poolEx extends poolNFT2 {
         // 执行代币交换， 买比卖多才执行merge
         let txraw
         try{
+            await new Promise(resolve => setTimeout(resolve, 3000));
             const utxo = await API.fetchUTXO(this.private_buy, sum + this.fee, this.network);
             console.log('utxo:', utxo)
             txraw = await this.swaptoToken_baseTBC(this.private_buy, this.address_buy, utxo, parseFloat(this.truncateDecimals(sum, 6)), this.lpPlan)
@@ -173,19 +174,13 @@ class poolEx extends poolNFT2 {
         // 如果交易失败，尝试重新执行
         if (txraw.length === 0) {
             console.log('txraw try again')
+            await new Promise(resolve => setTimeout(resolve, 3000));
             await this.initfromContractId()
             const utxo = await API.fetchUTXO(this.private_buy, sum + this.fee, this.network);
             txraw = await this.swaptoToken_baseTBC(this.private_buy, this.address_buy, utxo, parseFloat(this.truncateDecimals(sum, 6)), this.lpPlan)
         }
-        let raw;
-        try {
-            raw = await API.broadcastTXraw(txraw, this.network)
-        } catch(error) {
-            await this.initfromContractId()
-            const utxo = await API.fetchUTXO(this.private_buy, sum + this.fee, this.network);
-            txraw = await this.swaptoToken_baseTBC(this.private_buy, this.address_buy, utxo, parseFloat(this.truncateDecimals(sum, 6)), this.lpPlan)
-            raw = await API.broadcastTXraw(txraw, this.network)
-        }
+        const raw = await API.broadcastTXraw(txraw, this.network)
+
         await BuyTrade.findByIdAndUpdate(
             trade._id,
             { raw: raw },
@@ -244,6 +239,7 @@ class poolEx extends poolNFT2 {
     }
 
     async getSwaptoToken(amount_tbc) {
+        amount_tbc = parseFloat(this.truncateDecimals(amount_tbc, 6))
         const FTA = new FT(this.ft_a_contractTxid);
         const FTAInfo = await API.fetchFtInfo(FTA.contractTxid, this.network);
         await FTA.initialize(FTAInfo);
@@ -345,6 +341,7 @@ class poolEx extends poolNFT2 {
         // 执行代币交换
         let txraw
         try{
+            await new Promise(resolve => setTimeout(resolve, 3000));
             const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
             console.log('utxo:', utxo)
             txraw = await this.swaptoTBC_baseToken(this.private_sell, this.address_sell, utxo, sum, this.lpPlan)
@@ -368,6 +365,7 @@ class poolEx extends poolNFT2 {
         // 如果交易失败，尝试重新执行
         if (txraw === undefined) {
             try{
+                await new Promise(resolve => setTimeout(resolve, 3000));
                 await this.initfromContractId()
                 const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
                 txraw = await this.swaptoTBC_baseToken(this.private_sell, this.address_sell, utxo, sum, this.lpPlan)
@@ -391,6 +389,7 @@ class poolEx extends poolNFT2 {
         }
         // 如果交易失败，尝试重新执行
         if (txraw === undefined) {
+            await new Promise(resolve => setTimeout(resolve, 3000));
             await this.initfromContractId()
             const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
             txraw = await this.swaptoTBC_baseToken(this.private_sell, this.address_sell, utxo, sum, this.lpPlan)
