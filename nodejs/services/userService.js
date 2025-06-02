@@ -311,17 +311,17 @@ async function GetPool(poolContract, lpPlan, ft_contract_id) {
         let private_buy_sell = '';
 
         switch(poolContract.toLowerCase()) {
-            case 'a2e73baa74a0dab3c951ab50d913f08c4b8fe948662e6e2038327c1da34d9331'.toLowerCase():
-                address_buy_sell = '15KFMR28htitnmBdYVcZtvSfcQqsiG83SD';
-                private_buy_sell = tbc.PrivateKey.fromString('L15ojQnDXgRShoryDyX9iE35g8Tw9txqCWX5ZZotp6tL7uhUf3uZ');
+            case process.env.POOL_CONTRACT_1.toLowerCase():
+                address_buy_sell = process.env.ADDRESS_BUY_SELL_1;
+                private_buy_sell = process.env.PRIVATE_KEY_1;
                 break;
-            case 'eb10c7f0c068327bcb4aa9ac64145d4b1434856b906d9f2d181c2cc2e55a1f15'.toLowerCase():
-                address_buy_sell = '1GSJcPVSh9x8Z8TQZh6hyCYBwdG7bvuF9A';
-                private_buy_sell = tbc.PrivateKey.fromString('L3uK8CeYHJmUsQHqhYj3NVA7SsqbPSRxEYSQiEHS72B8N4k278D3');
+            case process.env.POOL_CONTRACT_2.toLowerCase():
+                address_buy_sell = process.env.ADDRESS_BUY_SELL_2;
+                private_buy_sell = process.env.PRIVATE_KEY_2;
                 break;
             default:
-                address_buy_sell = '1Ls612UKavNa5iQ7nj1DrBJjwFGQ9T8vMh';
-                private_buy_sell = tbc.PrivateKey.fromString('L5mmZdkBymfUiLCfjD1vgVPu1EZTkYAFEwEU4LbHSp9abkzR5Vjp');
+                address_buy_sell = process.env.ADDRESS_BUY_SELL_DEFAULT;
+                private_buy_sell = process.env.PRIVATE_KEY_DEFAULT;
         }
         
         const poolUse = new poolEx({
