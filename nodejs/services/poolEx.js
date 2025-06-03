@@ -4,6 +4,7 @@ const {PrivateKey} = require("tbc-lib-js");
 const {BuyTrade} = require('../model/BuyTrade');
 const {SellTrade} = require('../model/SellTrade');
 const {FTPrice} = require('../model/FTPrice');
+const {TradeError} = require('../model/TradeError');
 const { logInfoWithTimestamp, logErrWithTimestamp, logWarnWithTimestamp } = require('../tools/log');
 
 
@@ -125,7 +126,19 @@ class poolEx extends poolNFT2 {
         // 处理超出滑点的订单退款
         if(beyondSlideArray.length > 0) {
             logInfoWithTimestamp(beyondSlideArray.map(([addr]) => addr),beyondSlideArray.map(([description, amount]) => parseFloat(this.truncateDecimals(amount, 6))))
-            await this.transferTBC_toClient(this.private_buy, beyondSlideArray.map(([addr]) => addr), beyondSlideArray.map(([description, amount]) => this.truncateDecimals(amount, 6)))
+            try {
+                await this.transferTBC_toClient(this.private_buy, beyondSlideArray.map(([addr]) => addr), beyondSlideArray.map(([description, amount]) => this.truncateDecimals(amount, 6)))
+            } catch (error) {
+                await TradeError.create({
+                    hash: '',
+                    kind: 'BUY',
+                    errorCode: 1,
+                    errorMsg: error?.message || error,
+                    tx: '',
+                    retries: 0,
+                    status: 0
+                })
+            }
             await new Promise(resolve => setTimeout(resolve, 5000));
         }
         if(dataToProcess.length == 0) {
@@ -244,9 +257,21 @@ class poolEx extends poolNFT2 {
 
     async getSwaptoToken(amount_tbc) {
         amount_tbc = parseFloat(this.truncateDecimals(amount_tbc, 6))
-        const FTA = new FT(this.ft_a_contractTxid);
-        const FTAInfo = await API.fetchFtInfo(FTA.contractTxid, this.network);
-        await FTA.initialize(FTAInfo);
+        try {
+            const FTA = new FT(this.ft_a_contractTxid);
+            const FTAInfo = await API.fetchFtInfo(FTA.contractTxid, this.network);
+            await FTA.initialize(FTAInfo);
+        } catch(error) {
+            await TradeError.create({
+                hash: '',
+                kind: 'BUY',
+                errorCode: 1,
+                errorMsg: error?.message || error,
+                tx: '',
+                retries: 0,
+                status: 0
+            });
+        }
 
         // 计算手续费
         const amount_tbcbn = 
