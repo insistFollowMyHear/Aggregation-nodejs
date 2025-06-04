@@ -9,6 +9,8 @@ const {BuyTrade} = require('../model/BuyTrade');
 const {SellTrade} = require('../model/SellTrade');
 const {API, FT} = require("tbc-contract");
 const tbc = require("tbc-lib-js");
+const { logInfoWithTimestamp, logErrWithTimestamp, logWarnWithTimestamp } = require('../tools/log');
+
 const network= process.env.NETWORK || 'testnet';
 global.globalMap = new Map();
 
@@ -17,13 +19,13 @@ exports.doAggregation = async (poolUse) => {
 };
 
 exports.buy = async (data) => {
-    console.log('buy tx:', data.hash)
+    logInfoWithTimestamp('buy tx:', data.hash)
     const pool = await GetPool(data.pool, data.lpPlan, data.ft_contract_id)
     const balance = await pool.getTBCTX(data.hash)
     if (balance instanceof Error) {
         throw balance;
     }
-    console.log('buy:', data)
+    logInfoWithTimestamp('buy:', data)
     await Tx.create({
         pool: data.pool,
         hash: data.hash,
@@ -37,13 +39,13 @@ exports.buy = async (data) => {
 };
 
 exports.sell = async (data) => {
-    console.log('sell tx:', data.hash)
+    logInfoWithTimestamp('sell tx:', data.hash)
     const pool = await GetPool(data.pool, data.lpPlan, data.ft_contract_id)
     const balance = await pool.getFTTX(data.hash)
     if (balance instanceof Error) {
         throw balance;
     }
-    console.log('sell:', data)
+    logInfoWithTimestamp('sell:', data)
     await Tx.create({
         pool: data.pool,
         hash: data.hash,
@@ -307,28 +309,30 @@ exports.GetPools = async () => {
 async function GetPool(poolContract, lpPlan, ft_contract_id) {
     const pool = await globalMap.get(poolContract)
     if(!pool) {
-        let address_buy_sell = '';
-        let private_buy_sell = '';
+        let address_buy = '1EhUy9VYASML4LFCdv5JFQDWBzsjecm3hr';
+        let private_buy = 'L1EUcQTQDbDk9QGCcEDyaw2z2tjGwSi9TiGGKnfVwtf7MTkytGdZ';
 
-        switch(poolContract.toLowerCase()) {
-            case process.env.POOL_CONTRACT_1.toLowerCase():
-                address_buy_sell = process.env.ADDRESS_BUY_SELL_1;
-                private_buy_sell = process.env.PRIVATE_KEY_1;
-                break;
-            case process.env.POOL_CONTRACT_2.toLowerCase():
-                address_buy_sell = process.env.ADDRESS_BUY_SELL_2;
-                private_buy_sell = process.env.PRIVATE_KEY_2;
-                break;
-            default:
-                address_buy_sell = process.env.ADDRESS_BUY_SELL_DEFAULT;
-                private_buy_sell = process.env.PRIVATE_KEY_DEFAULT;
-        }
+        let address_sell = '1D6Gy6NAGMhKiVxkYnnERZbDkZo8gYcXa1';
+        let private_sell = 'L5Am173ZJqx4iHbqDafZGBLZmfargF6xFN35J1xrR24YFUjyGkXK';
+
+        // switch(poolContract.toLowerCase()) {
+        //     case ''.toLowerCase():
+        //         address_buy = '';
+        //         private_buy = '';
+        //         break;
+        //     case ''.toLowerCase():
+        //         address_sell = '';
+        //         private_sell = '';
+        //         break;
+        // }
         
         const poolUse = new poolEx({
             txid: poolContract,
             network: network,
-            address_buy_sell,
-            private_buy_sell,
+            address_buy,
+            private_buy,
+            address_sell,
+            private_sell,
             lpPlan,
             ft_contract_id
         })

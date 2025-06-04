@@ -11,29 +11,26 @@ class poolEx extends poolNFT2 {
 
     constructor(config = {}) {
         super({ txid: config?.txid, network: config?.network });
-        // 服务费
         this.serviceFee = Number(process.env.SERVICEFEE)
-        // 流动性提供者费用
         this.lpFee = Number(process.env.LPFEE)
-        // 手续费因子
         this.feeFactor = Number(process.env.FEEFACTOR)
-        // 交易手续费
-        this.tradeFee = Number(process.env.TRADEFEE)
-        // utxo 手续费
-        this.fee = Number(process.env.FEE)
-        this.address_buy = config.address_buy_sell;
-        this.private_buy = tbc.PrivateKey.fromString(config.private_buy_sell);
 
-        this.address_sell = config.address_buy_sell;
-        this.private_sell = tbc.PrivateKey.fromString(config.private_buy_sell);
+        this.tradeFee = Number(process.env.TRADEFEE)
+        this.fee = Number(process.env.FEE)
+
+        this.address_buy = config.address_buy;
+        this.private_buy = tbc.PrivateKey.fromString(config.private_buy);
+
+        this.address_sell = config.address_sell;
+        this.private_sell = tbc.PrivateKey.fromString(config.private_sell);
 
         this.buys = [];
         this.sells = [];
+        
         this.lpPlan = config.lpPlan;
         this.ft_contract_id = config.ft_contract_id;
 
         this.periodicTime = Number(process.env.PERIODICTIME)
-        this.trade_timeout = Number(process.env.TRADE_TIMEOUT)
     }
 
     async initfromContractId(retryCount = 8) {
@@ -134,7 +131,7 @@ class poolEx extends poolNFT2 {
         // 计算总交易量，创建交易记录
         sum = dataToProcess.reduce((total, item) => total + item[1], 0);
         ft_amount = await this.getSwaptoToken(sum)
-        logInfoWithTimestamp('sum and ft_amount after slide refund:', sum, ft_amount)
+        logInfoWithTimestamp('sum and ft_amount after slide refund:', 'sum: ', sum, 'ft_amount:', ft_amount, 'fee: ', this.fee)
         await FTPrice.create({
             ft: this.ft_a_contractTxid,
             kind: '1',
@@ -156,9 +153,8 @@ class poolEx extends poolNFT2 {
         });
         // 执行代币交换， 买比卖多才执行merge
         let txraw
-        logInfoWithTimestamp(this.private_buy, sum + this.fee, this.network)
         try{
-            await new Promise(resolve => setTimeout(resolve, this.trade_timeout));
+            await new Promise(resolve => setTimeout(resolve, 3000));
             const utxo = await API.fetchUTXO(this.private_buy, sum + this.fee, this.network);
             logInfoWithTimestamp('utxo:', utxo)
             txraw = await this.swaptoToken_baseTBC(this.private_buy, this.address_buy, utxo, parseFloat(this.truncateDecimals(sum, 6)), this.lpPlan)
@@ -177,7 +173,7 @@ class poolEx extends poolNFT2 {
         // 如果交易失败，尝试重新执行
         if (txraw.length === 0) {
             logInfoWithTimestamp('txraw try again')
-            await new Promise(resolve => setTimeout(resolve, this.trade_timeout));
+            await new Promise(resolve => setTimeout(resolve, 3000));
             await this.initfromContractId()
             const utxo = await API.fetchUTXO(this.private_buy, sum + this.fee, this.network);
             txraw = await this.swaptoToken_baseTBC(this.private_buy, this.address_buy, utxo, parseFloat(this.truncateDecimals(sum, 6)), this.lpPlan)
@@ -322,7 +318,7 @@ class poolEx extends poolNFT2 {
         // 计算总交易量，创建交易记录
         sum = dataToProcess.reduce((total, item) => total + item[1], 0);
         tbc_amount = await this.getSwaptoTBC(sum)
-        logInfoWithTimestamp('sum and tbc_amount after slide refund:', sum, tbc_amount)
+        logInfoWithTimestamp('sum and tbc_amount after slide refund:', 'sum: ', sum, 'ft_amount:', tbc_amount, 'fee: ', this.fee)
         await FTPrice.create({
             ft: this.ft_a_contractTxid,
             kind: '2',
@@ -345,7 +341,7 @@ class poolEx extends poolNFT2 {
         // 执行代币交换
         let txraw
         try{
-            await new Promise(resolve => setTimeout(resolve, this.trade_timeout));
+            await new Promise(resolve => setTimeout(resolve, 3000));
             const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
             logInfoWithTimestamp('utxo:', utxo)
             txraw = await this.swaptoTBC_baseToken(this.private_sell, this.address_sell, utxo, sum, this.lpPlan)
@@ -369,7 +365,7 @@ class poolEx extends poolNFT2 {
         // 如果交易失败，尝试重新执行
         if (txraw === undefined) {
             try{
-                await new Promise(resolve => setTimeout(resolve, this.trade_timeout));
+                await new Promise(resolve => setTimeout(resolve, 3000));
                 await this.initfromContractId()
                 const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
                 logInfoWithTimestamp('utxo try again: ', utxo)
@@ -394,7 +390,7 @@ class poolEx extends poolNFT2 {
         }
         // 如果交易失败，尝试重新执行
         if (txraw === undefined) {
-            await new Promise(resolve => setTimeout(resolve, this.trade_timeout));
+            await new Promise(resolve => setTimeout(resolve, 3000));
             await this.initfromContractId()
             const utxo = await API.fetchUTXO(this.private_sell, this.fee, this.network);
             logInfoWithTimestamp('utxo try again again: ', utxo)
