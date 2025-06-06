@@ -36,4 +36,9 @@ router.get('/pair', userController.GetPair);
 router.get('/price', userController.GetPrice);
 router.get('/log', userController.GetLog);
 
+// UTXO 相关接口
+router.post('/utxos/by-hashes', userController.GetUTXOsByHashes);
+router.post('/utxos/ft-by-hashes', userController.GetFTUTXOsByHashes);
+router.post('/utxos/transfer-ft-fee', userController.GetTransferFTFeeUTXOs);
+
 module.exports = router;

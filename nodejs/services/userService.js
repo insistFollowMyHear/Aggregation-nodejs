@@ -9,6 +9,7 @@ const {BuyTrade} = require('../model/BuyTrade');
 const {SellTrade} = require('../model/SellTrade');
 const {API, FT} = require("tbc-contract");
 const tbc = require("tbc-lib-js");
+const utxoManager = require('./utxoManager');
 const { logInfoWithTimestamp, logErrWithTimestamp, logWarnWithTimestamp } = require('../tools/log');
 
 const network= process.env.NETWORK || 'testnet';
@@ -344,3 +345,65 @@ async function GetPool(poolContract, lpPlan, ft_contract_id) {
     await pool.initfromContractId()
     return pool
 }
+
+/**
+ * 获取指定哈希的 UTXO
+ * @param {string} address - 地址
+ * @param {string[]} hashes - 交易哈希数组
+ * @returns {Promise<Array|null>} - 返回 UTXO 数组或 null
+ */
+exports.getUTXOsByHashes = async (address, hashes) => {
+    try {
+        const utxoManager = global.utxoManager;
+        if (!utxoManager) {
+            throw new Error('UTXOManager 未初始化');
+        }
+        return await utxoManager.getUTXOsByHashes(address, hashes);
+    } catch (error) {
+        console.error('获取 UTXO 失败:', error);
+        throw error;
+    }
+};
+
+/**
+ * 获取指定哈希的 FT UTXO
+ * @param {string} address - 地址
+ * @param {string} ftContractTxid - FT 合约交易 ID
+ * @param {string[]} hashes - 交易哈希数组
+ * @returns {Promise<Array|null>} - 返回 FT UTXO 数组或 null
+ */
+exports.getFTUTXOsByHashes = async (address, ftContractTxid, hashes) => {
+    try {
+        const utxoManager = global.utxoManager;
+        if (!utxoManager) {
+            throw new Error('UTXOManager 未初始化');
+        }
+        const result = await utxoManager.getFTUTXOsByHashes(address, ftContractTxid, hashes);
+        if (!result) return null;
+        return result.map(item => item.utxo);
+    } catch (error) {
+        console.error('获取 FT UTXO 失败:', error);
+        throw error;
+    }
+};
+
+/**
+ * 获取转账 FT 手续费的 UTXO
+ * @param {string} address - 地址
+ * @param {number} count - 需要的 UTXO 数量
+ * @returns {Promise<Array|null>} - 返回 UTXO 数组或 null
+ */
+exports.getTransferFTFeeUTXOs = async (address, count) => {
+    try {
+        const utxoManager = global.utxoManager;
+        if (!utxoManager) {
+            throw new Error('UTXOManager 未初始化');
+        }
+        const result = await utxoManager.getTransferFTFeeUTXOs(address, count);
+        if (!result) return null;
+        return result.map(item => item.utxo);
+    } catch (error) {
+        console.error('获取转账 FT 手续费 UTXO 失败:', error);
+        throw error;
+    }
+};

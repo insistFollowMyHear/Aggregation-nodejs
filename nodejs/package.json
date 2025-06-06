@@ -22,7 +22,8 @@
     "node-cron": "^3.0.3",
     "nodemon": "^3.1.9",
     "tbc-contract": "^1.2.2",
-    "tbc-lib-js": "^1.0.27"
+    "tbc-lib-js": "^1.0.27",
+    "resend": "^4.5.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.2"

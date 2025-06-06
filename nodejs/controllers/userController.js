@@ -104,3 +104,78 @@ exports.GetPrice = async (req, res, next) => {
         next(err); // 将错误传递给全局错误处理器
     }
 };
+
+/**
+ * 获取指定哈希的 UTXO
+ */
+exports.GetUTXOsByHashes = async (req, res, next) => {
+    try {
+        const { address, hashes } = req.body;
+        if (!address || !hashes || !Array.isArray(hashes)) {
+            return res.status(400).send({
+                code: 400,
+                msg: '参数错误：address 和 hashes 数组是必需的',
+                data: null
+            });
+        }
+
+        const utxos = await userService.getUTXOsByHashes(address, hashes);
+        res.send({
+            code: 200,
+            msg: 'success',
+            data: utxos
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+
+/**
+ * 获取指定哈希的 FT UTXO
+ */
+exports.GetFTUTXOsByHashes = async (req, res, next) => {
+    try {
+        const { address, ftContractTxid, hashes } = req.body;
+        if (!address || !ftContractTxid || !hashes || !Array.isArray(hashes)) {
+            return res.status(400).send({
+                code: 400,
+                msg: '参数错误：address、ftContractTxid 和 hashes 数组是必需的',
+                data: null
+            });
+        }
+
+        const ftUtxos = await userService.getFTUTXOsByHashes(address, ftContractTxid, hashes);
+        res.send({
+            code: 200,
+            msg: 'success',
+            data: ftUtxos
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+
+/**
+ * 获取转账 FT 手续费的 UTXO
+ */
+exports.GetTransferFTFeeUTXOs = async (req, res, next) => {
+    try {
+        const { address, count = 1 } = req.body;
+        if (!address) {
+            return res.status(400).send({
+                code: 400,
+                msg: '参数错误：address 是必需的',
+                data: null
+            });
+        }
+
+        const utxos = await userService.getTransferFTFeeUTXOs(address, count);
+        res.send({
+            code: 200,
+            msg: 'success',
+            data: utxos
+        });
+    } catch (err) {
+        next(err);
+    }
+};
